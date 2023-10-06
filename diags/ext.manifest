@@ -15,3 +15,6 @@ platforms:
         context:
             libs: ['Ole32']
             use-clang: true
+    x86_64-linux:
+        context:
+            dynamicLibs: ['dbus-1']

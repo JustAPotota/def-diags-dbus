@@ -1,4 +1,4 @@
-#if defined(DM_PLATFORM_LINUX)
+#if defined(NOT_DM_PLATFORM_LINUX)
 
 /*
   Native File Dialog
