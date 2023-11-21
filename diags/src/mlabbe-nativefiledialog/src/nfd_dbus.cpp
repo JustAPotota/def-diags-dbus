@@ -6,6 +6,7 @@
   http://www.frogtoss.com/labs
 */
 
+#include <ctype.h>
 #include <stdio.h>
 #include <assert.h>
 #include <string.h>
@@ -145,6 +146,35 @@ bool check_type_and_recurse(DBusMessageIter *iter, int arg_type, DBusMessageIter
     return false;
 }
 
+// https://stackoverflow.com/a/14530993
+void urldecode(char *dst, const char *src)
+{
+    char a, b;
+    while (*src) {
+        if ((*src == '%') &&
+        ((a = src[1]) && (b = src[2])) &&
+        (isxdigit(a) && isxdigit(b))) {
+            if (a >= 'a')
+            a -= 'a'-'A';
+            if (a >= 'A')
+            a -= ('A' - 10);
+            else
+            a -= '0';
+            if (b >= 'a')
+            b -= 'a'-'A';
+            if (b >= 'A')
+            b -= ('A' - 10);
+            else
+            b -= '0';
+            *dst++ = 16*a+b;
+            src+=3;
+        } else {
+            *dst++ = *src++;
+        }
+    }
+    *dst++ = '\0';
+}
+
 nfdresult_t parse_response_message(DBusMessage *message, nfdpathset_t *path_set)
 {
     DBusMessageIter args;
@@ -184,10 +214,11 @@ nfdresult_t parse_response_message(DBusMessage *message, nfdpathset_t *path_set)
                     {
                         const char *uri;
                         dbus_message_iter_get_basic(&uris_iter, &uri);
+                        char *decoded_uri = (char*)NFDi_Malloc(strlen(uri)-6);
 
-                        uri += 7; // Skip "file://"
+                        urldecode(decoded_uri, uri + 7); // +7 to skip "file://"
 
-                        uris[i] = strdup(uri);
+                        uris[i] = decoded_uri;
 
                         path_buf_size += strlen(uris[i]) + 1;
 
