@@ -10,7 +10,9 @@
 #include <assert.h>
 #include <string.h>
 #include <dbus/dbus.h>
+#include <dmsdk/sdk.h>
 #include <dmsdk/graphics/graphics_native.h>
+#include <dmsdk/dlib/dstrings.h>
 #include "nfd.h"
 #include "nfd_common.h"
 
@@ -183,6 +185,8 @@ nfdresult_t parse_response_message(DBusMessage *message, nfdpathset_t *path_set)
                         const char *uri;
                         dbus_message_iter_get_basic(&uris_iter, &uri);
 
+                        uri += 7; // Skip "file://"
+
                         uris[i] = strdup(uri);
 
                         path_buf_size += strlen(uris[i]) + 1;
@@ -230,16 +234,16 @@ void set_handle_token(DBusMessageIter *options)
     append_vardict_entry(options, DBUS_TYPE_STRING, DBUS_TYPE_STRING, &handle_token_key, &handle_token);
 }
 
-void set_multiple(DBusMessageIter *options, bool multiple)
+void set_multiple(DBusMessageIter *options, bool *multiple)
 {
     const char *key = "multiple";
-    append_vardict_entry(options, DBUS_TYPE_STRING, DBUS_TYPE_BOOLEAN, &key, &multiple);
+    append_vardict_entry(options, DBUS_TYPE_STRING, DBUS_TYPE_BOOLEAN, &key, multiple);
 }
 
-void set_directory(DBusMessageIter *options, bool directory)
+void set_directory(DBusMessageIter *options, bool *directory)
 {
     const char *key = "directory";
-    append_vardict_entry(options, DBUS_TYPE_STRING, DBUS_TYPE_BOOLEAN, &key, &directory);
+    append_vardict_entry(options, DBUS_TYPE_STRING, DBUS_TYPE_BOOLEAN, &key, directory);
 }
 
 size_t filter_count(const char *filters)
@@ -262,11 +266,24 @@ void split_filters(const char *filters)
 {
     size_t count = filter_count(filters);
     size_t current_filter = 0;
+    size_t current_filter_start = 0;
+    size_t current_filter_size = 0;
     const char *current_char = filters;
-    const char *filter_array[count];
+    char *filter_array[count];
     while (current_char)
     {
+        if (*current_char == ';')
+        {
+            filter_array[current_filter] = (char *)NFDi_Malloc(current_filter_size + 1);
+            strcpy(filter_array[current_filter], filters + current_filter_start);
+            current_filter++;
         }
+        else
+        {
+            current_filter_size++;
+        }
+        current_char++;
+    }
 }
 
 nfdresult_t set_filters(DBusMessageIter *options, const char *filters)
@@ -284,19 +301,45 @@ nfdresult_t set_filters(DBusMessageIter *options, const char *filters)
     DBusMessageIter filters_array;
     dbus_message_iter_open_container(&dict_entry, DBUS_TYPE_ARRAY, "(sa(us))", &filters_array);
 
-    char current_filter_name[NFD_MAX_STRLEN] = {0};
-    const char *current_char = filters;
-    while (*current_char)
-    {
+    char *mut_filters = strdup(filters);
+    char *current_filters;
+    char *lasts;
 
-        current_char++;
+    current_filters = dmStrTok(mut_filters, ";", &lasts);
+    while (current_filters)
+    {
+        DBusMessageIter filter_set;
+        dbus_message_iter_open_container(&filters_array, DBUS_TYPE_STRUCT, NULL, &filter_set);
+        dbus_message_iter_append_basic(&filter_set, DBUS_TYPE_STRING, strdup(current_filters));
+
+        DBusMessageIter patterns;
+        dbus_message_iter_open_container(&filter_set, DBUS_TYPE_ARRAY, "(us)", &patterns);
+
+        char *current_pattern;
+        char *last;
+        current_pattern = dmStrTok(current_filters, ",", &last);
+        while (current_pattern)
+        {
+            DBusMessageIter pattern;
+            dbus_message_iter_open_container(&patterns, DBUS_TYPE_STRUCT, NULL, &pattern);
+            dbus_message_iter_append_basic(&pattern, DBUS_TYPE_UINT32, 0);
+
+            char *globbed_pattern = (char *)NFDi_Malloc(strlen(current_pattern + 2 + 1));
+            sprintf(globbed_pattern, "*.%s", current_pattern);
+            dbus_message_iter_append_basic(&pattern, DBUS_TYPE_STRING, &globbed_pattern);
+
+            dbus_message_iter_close_container(&patterns, &pattern);
+        }
+
+        dbus_message_iter_close_container(&filter_set, &patterns);
+        dbus_message_iter_close_container(&filters_array, &filter_set);
     }
 
     dbus_message_iter_close_container(&dict_entry, &filters_array);
     dbus_message_iter_close_container(options, &dict_entry);
 }
 
-nfdresult_t dbus(bool multiple, bool directory, const char *filters, const nfdchar_t *default_path, nfdpathset_t *out_path_set)
+nfdresult_t dbus(bool *multiple, bool *directory, const char *filters, const nfdchar_t *default_path, nfdpathset_t *out_path_set)
 {
     if (ensure_dbus_connection() == NFD_ERROR)
     {
@@ -364,8 +407,11 @@ nfdresult_t NFD_OpenDialog(const char *filterList,
                            const nfdchar_t *defaultPath,
                            nfdchar_t **outPath)
 {
+    bool multiple = false;
+    bool directory = false;
+
     nfdpathset_t path_set;
-    nfdresult_t result = dbus(false, false, filterList, defaultPath, &path_set);
+    nfdresult_t result = dbus(&multiple, &directory, filterList, defaultPath, &path_set);
 
     if (result != NFD_OKAY)
     {
@@ -380,7 +426,14 @@ nfdresult_t NFD_OpenDialogMultiple(const nfdchar_t *filterList,
                                    const nfdchar_t *defaultPath,
                                    nfdpathset_t *outPaths)
 {
-    return dbus(true, false, filterList, defaultPath, outPaths);
+    bool multiple = true;
+    bool directory = false;
+    return dbus(&multiple, &directory, filterList, defaultPath, outPaths);
+}
+
+nfdresult_t ZenityCommon(char **command, int commandLen, const nfdchar_t *defaultPath, const nfdchar_t *filterList, char **stdOut)
+{
+    return NFD_ERROR;
 }
 
 nfdresult_t NFD_SaveDialog(const nfdchar_t *filterList,
@@ -418,8 +471,10 @@ nfdresult_t NFD_SaveDialog(const nfdchar_t *filterList,
 nfdresult_t NFD_PickFolder(const nfdchar_t *defaultPath,
                            nfdchar_t **outPath)
 {
+    bool multiple = false;
+    bool directory = true;
     nfdpathset_t path_set;
-    nfdresult_t result = dbus(false, true, NULL, defaultPath, &path_set);
+    nfdresult_t result = dbus(&multiple, &directory, NULL, defaultPath, &path_set);
 
     if (result != NFD_OKAY)
     {

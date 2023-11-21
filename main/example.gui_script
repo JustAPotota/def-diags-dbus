@@ -39,13 +39,18 @@ function on_input(self, action_id, action)
 			show_result(status, path)
 			print("diags.open:", status, path)
 		elseif hit_save then
-			print("diags.save:", diags.save())
+			local status, path = diags.save()
+			show_result(status, path)
+			print("diags.save:", status, path)
 		elseif hit_open_multiple then
-			local r, t = diags.open_multiple()
-			print("diags.open_multiple:", r)
-			pprint(t)
+			local status, paths = diags.open_multiple()
+			show_result(status, unpack(path))
+			print("diags.open_multiple:", status)
+			pprint(paths)
 		elseif hit_open_folder then
-			print("diags.open_folder:", diags.open_folder())
+			local status, path = diags.open_folder()
+			show_result(status, path)
+			print("diags.open_folder:", status, path)
 		end
 
 	end
